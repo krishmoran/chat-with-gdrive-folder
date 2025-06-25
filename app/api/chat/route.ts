@@ -15,28 +15,58 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const { message, folderId, history } = await request.json()
+    const { message, folderId, history, documents, metadata } = await request.json()
     console.log(`📝 Message: "${message}"`)
     console.log(`📂 Folder ID: ${folderId}`)
     console.log(`📚 History length: ${history?.length || 0}`)
 
-    // Handle function warmup requests
+    // Handle function warmup requests with document transfer
     if (message === 'warmup') {
       console.log('🔥 Function warmup request received - initializing chat function...')
       
-      // Try to get the index (this initializes everything)
-      const index = getIndex(folderId)
-      
-      if (index) {
-        console.log('✅ Function warmed successfully - index found and loaded')
-        return NextResponse.json({ 
-          response: 'Function warmed successfully',
-          warmed: true 
-        })
+      if (documents && documents.length > 0) {
+        console.log(`📦 Received ${documents.length} documents in warmup - reconstructing index...`)
+        
+        try {
+          // Import Document class
+          const { Document, VectorStoreIndex } = await import('llamaindex')
+          
+          // Reconstruct documents from serialized data
+          const reconstructedDocs = documents.map((docData: any) => new Document({
+            text: docData.text,
+            metadata: docData.metadata || {},
+            id_: docData.id_
+          }))
+          
+          console.log(`🔄 Reconstructed ${reconstructedDocs.length} documents, creating index...`)
+          
+          // Recreate vector index from documents
+          const index = await VectorStoreIndex.fromDocuments(reconstructedDocs)
+          
+          // Store in this instance's memory
+          const { storeIndex } = await import('@/lib/document-store')
+          storeIndex(folderId, index)
+          
+          console.log('✅ Function warmed successfully - index reconstructed and stored!')
+          console.log(`📊 Index created with ${reconstructedDocs.length} documents`)
+          
+          return NextResponse.json({ 
+            response: 'Function warmed successfully with index',
+            warmed: true,
+            documentsLoaded: reconstructedDocs.length
+          })
+        } catch (error) {
+          console.error('❌ Error reconstructing index during warmup:', error)
+          return NextResponse.json({ 
+            response: 'Function warmed but index reconstruction failed',
+            warmed: true,
+            error: 'reconstruction_failed'
+          }, { status: 500 })
+        }
       } else {
-        console.log('⚠️ Function warmed but index not yet available (timing)')
+        console.log('⚠️ Warmup received but no documents provided')
         return NextResponse.json({ 
-          response: 'Function warmed, index pending',
+          response: 'Function warmed but no documents received',
           warmed: true 
         }, { status: 404 })
       }

@@ -477,26 +477,45 @@ export async function POST(request: NextRequest) {
       
       console.log(`🔥 Warming chat function at: ${baseUrl}/api/chat`)
       
-      // Make a test call to the chat endpoint to initialize it
-      const warmupResponse = await fetch(`${baseUrl}/api/chat`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Cookie': request.headers.get('cookie') || '', // Pass through authentication
-        },
-        body: JSON.stringify({
-          message: 'warmup',
-          folderId,
-          history: []
-        }),
-      })
+              // Serialize documents to pass directly to chat function
+        const serializedDocuments = documentsWithProperMetadata.map(doc => ({
+          text: doc.getText(),
+          metadata: doc.metadata || {},
+          id_: doc.id_ || null
+        }))
+        
+        console.log(`📦 Serializing ${serializedDocuments.length} documents for warmup transfer`)
+        
+        // Make a test call to the chat endpoint to initialize it WITH the index data
+        const warmupResponse = await fetch(`${baseUrl}/api/chat`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Cookie': request.headers.get('cookie') || '', // Pass through authentication
+          },
+          body: JSON.stringify({
+            message: 'warmup',
+            folderId,
+            history: [],
+            documents: serializedDocuments, // ← CRITICAL: Pass documents directly
+            metadata: {
+              folderName,
+              totalFiles: supportedFiles.length,
+              documentsProcessed: documents.length
+            }
+          }),
+        })
       
       console.log(`🔥 Chat function warmup response: ${warmupResponse.status}`)
       
-      if (warmupResponse.status === 200 || warmupResponse.status === 404) {
-        // 200 = success, 404 = index not found yet (but function is warm)
-        addProgressUpdate(folderId, '✅ Chat function warmed successfully! Ready for instant chat.')
-        console.log('✅ Chat function successfully warmed - should eliminate cold starts')
+      if (warmupResponse.status === 200) {
+        // Success - index was reconstructed in chat function
+        const warmupData = await warmupResponse.json()
+        addProgressUpdate(folderId, `✅ Chat function warmed with ${warmupData.documentsLoaded} documents! Ready for instant chat.`)
+        console.log('✅ Chat function successfully warmed with index - cold starts eliminated!')
+      } else if (warmupResponse.status === 404) {
+        addProgressUpdate(folderId, '⚠️ Chat warmup completed but no documents transferred')
+        console.log('⚠️ Chat warmup completed but documents not received')
       } else {
         addProgressUpdate(folderId, '⚠️ Chat warmup partial - may need one retry')
         console.log(`⚠️ Chat warmup returned status ${warmupResponse.status}`)
@@ -513,7 +532,16 @@ export async function POST(request: NextRequest) {
         const backupResponse = await fetch(backupUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: 'warmup', folderId, history: [] }),
+          body: JSON.stringify({ 
+            message: 'warmup', 
+            folderId, 
+            history: [],
+            documents: documentsWithProperMetadata.map(doc => ({
+              text: doc.getText(),
+              metadata: doc.metadata || {},
+              id_: doc.id_ || null
+            }))
+          }),
         })
         
         console.log(`🔄 Backup warmup status: ${backupResponse.status}`)
