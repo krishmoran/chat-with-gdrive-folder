@@ -164,27 +164,6 @@ export function FolderInput({ onFolderProcessed, isIndexing, setIsIndexing }: Fo
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <div className="text-sm text-center">
-              <span className="text-gray-600">{status}</span>
-            </div>
-          </div>
-          
-          {/* Real-time progress logs */}
-          <div className="bg-gray-50 p-4 rounded-lg max-h-60 overflow-y-auto">
-            <h4 className="text-sm font-medium text-gray-900 mb-2">Processing Log:</h4>
-            <div className="space-y-1 text-xs font-mono">
-              {progressLogs.map((log, index) => (
-                <div key={index} className="text-gray-700">
-                  {log}
-                </div>
-              ))}
-              {progressLogs.length === 0 && (
-                <div className="text-gray-500">Waiting for updates...</div>
-              )}
-            </div>
-          </div>
-          
           <div className="bg-blue-50 p-4 rounded-lg">
             <p className="text-sm text-blue-800">
               This may take a few minutes depending on the number of documents in your folder.
