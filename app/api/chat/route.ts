@@ -20,6 +20,28 @@ export async function POST(request: NextRequest) {
     console.log(`📂 Folder ID: ${folderId}`)
     console.log(`📚 History length: ${history?.length || 0}`)
 
+    // Handle function warmup requests
+    if (message === 'warmup') {
+      console.log('🔥 Function warmup request received - initializing chat function...')
+      
+      // Try to get the index (this initializes everything)
+      const index = getIndex(folderId)
+      
+      if (index) {
+        console.log('✅ Function warmed successfully - index found and loaded')
+        return NextResponse.json({ 
+          response: 'Function warmed successfully',
+          warmed: true 
+        })
+      } else {
+        console.log('⚠️ Function warmed but index not yet available (timing)')
+        return NextResponse.json({ 
+          response: 'Function warmed, index pending',
+          warmed: true 
+        }, { status: 404 })
+      }
+    }
+
     if (!message || !folderId) {
       console.log('❌ Missing message or folderId')
       return NextResponse.json({ error: 'Message and folderId are required' }, { status: 400 })

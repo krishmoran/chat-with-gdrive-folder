@@ -307,14 +307,28 @@ export async function POST(request: NextRequest) {
     for (let i = 0; i < supportedFiles.length; i++) {
       const file = supportedFiles[i]
       addProgressUpdate(folderId, `📄 Processing file ${i + 1}/${supportedFiles.length}: ${file.name}`)
-      const document = await processFile(drive, file, i, supportedFiles.length)
-      if (document && document.getText().trim()) {
-        documents.push(document)
-        console.log(`  ✅ Successfully processed: ${file.name}`)
-        addProgressUpdate(folderId, `  ✅ Successfully processed: ${file.name}`)
-      } else {
-        console.log(`  ⚠️ Skipped (no content): ${file.name}`)
-        addProgressUpdate(folderId, `  ⚠️ Skipped (no content): ${file.name}`)
+      
+      // Add a small delay to ensure progress updates are visible
+      await new Promise(resolve => setTimeout(resolve, 100))
+      
+      try {
+        const document = await processFile(drive, file, i, supportedFiles.length)
+        if (document && document.getText().trim()) {
+          documents.push(document)
+          console.log(`  ✅ Successfully processed: ${file.name}`)
+          addProgressUpdate(folderId, `  ✅ Successfully processed: ${file.name}`)
+        } else {
+          console.log(`  ⚠️ Skipped (no content): ${file.name}`)
+          addProgressUpdate(folderId, `  ⚠️ Skipped (no content): ${file.name}`)
+        }
+      } catch (error) {
+        console.error(`  ❌ Error processing file ${file.name}:`, error)
+        addProgressUpdate(folderId, `  ❌ Error processing file: ${file.name}`)
+      }
+      
+      // Small delay between files to ensure EventSource can keep up
+      if (i < supportedFiles.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 200))
       }
     }
 
@@ -446,6 +460,36 @@ export async function POST(request: NextRequest) {
     // Store the index in memory (in production, use persistent storage)
     storeIndex(folderId, index)
     addProgressUpdate(folderId, '💾 Storing index for chat queries...')
+    
+    // CRITICAL: Warm the chat function to eliminate cold start issues
+    addProgressUpdate(folderId, '🔥 Warming chat function to eliminate cold starts...')
+    try {
+      // Make a test call to the chat endpoint to initialize it
+      const warmupResponse = await fetch(`${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/api/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Cookie': request.headers.get('cookie') || '', // Pass through authentication
+        },
+        body: JSON.stringify({
+          message: 'warmup',
+          folderId,
+          history: []
+        }),
+      })
+      
+      console.log(`🔥 Chat function warmup response: ${warmupResponse.status}`)
+      
+      if (warmupResponse.status === 200 || warmupResponse.status === 404) {
+        // 200 = success, 404 = index not found yet (but function is warm)
+        addProgressUpdate(folderId, '✅ Chat function warmed successfully! Ready for instant chat.')
+      } else {
+        addProgressUpdate(folderId, '⚠️ Chat warmup partial - may need one retry')
+      }
+    } catch (error) {
+      console.log('⚠️ Chat function warmup failed (non-critical):', error)
+      addProgressUpdate(folderId, '⚠️ Chat warmup skipped - chat may need brief pause before first use')
+    }
 
     const result = {
       success: true,
