@@ -60,25 +60,23 @@ export function FolderInput({ onFolderProcessed, isIndexing, setIsIndexing }: Fo
           setProgressLogs(prev => [...prev, message])
           setStatus(message)
           
-          // Simple phase-based progress
-          if (message.includes('🚀 Starting') || message.includes('🔐 Connected to Google Drive')) {
-            currentProgress = 10
+          // Update progress based on key milestones
+          if (message.includes('🔐 Connecting')) currentProgress = 10
+          else if (message.includes('📋 Fetching folder')) currentProgress = 20
+          else if (message.includes('📄 Found') && message.includes('files')) currentProgress = 30
+          else if (message.includes('🔄 Starting document')) currentProgress = 40
+          else if (message.includes('Processing file')) {
+            // Extract file number for granular progress
+            const match = message.match(/(\d+)\/(\d+)/)
+            if (match) {
+              const current = parseInt(match[1])
+              const total = parseInt(match[2])
+              currentProgress = 40 + ((current / total) * 30) // 40-70% for file processing
+            }
           }
-          else if (message.includes('📄 Found') && (message.includes('files') || message.includes('starting processing'))) {
-            currentProgress = 30
-          }
-          else if (message.includes('✅ Folder already processed') || message.includes('Warming chat function')) {
-            currentProgress = 90
-          }
-          else if (message.includes('🧠 All files processed') || message.includes('creating search index')) {
-            currentProgress = 70
-          }
-          else if (message.includes('🔥 Index ready') || message.includes('warming chat function')) {
-            currentProgress = 90
-          }
-          else if (message.includes('🎉') || message.includes('Complete!') || message.includes('Ready to chat')) {
-            currentProgress = 100
-          }
+          else if (message.includes('🧠 Creating vector')) currentProgress = 80
+          else if (message.includes('✅ Vector index created')) currentProgress = 90
+          else if (message.includes('🎉 Folder processing completed')) currentProgress = 100
           
           setProgress(currentProgress)
         }
@@ -87,7 +85,7 @@ export function FolderInput({ onFolderProcessed, isIndexing, setIsIndexing }: Fo
           console.warn('EventSource error occurred')
           eventSourceRef.current?.close()
         }
-              }, 100) // Reduced delay to catch early cold start updates
+      }, 500) // 500ms delay to ensure processing starts first
       
       const response = await processingPromise
 

@@ -4,7 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { google } from 'googleapis'
 import { Document, VectorStoreIndex } from 'llamaindex'
 import { LlamaParseReader } from '@llamaindex/cloud'
-import { storeIndex, getIndex } from '@/lib/document-store'
+import { storeIndex } from '@/lib/document-store'
 import { addProgressUpdate, clearProgress } from '../progress/route'
 
 // Helper function to process different file types
@@ -230,57 +230,20 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Folder ID is required' }, { status: 400 })
     }
 
-    // Clear any existing progress and start immediately
+    // Clear any existing progress data before starting
     clearProgress(folderId)
     addProgressUpdate(folderId, '🚀 Starting folder processing...')
-    
-    // Check if folder is already processed FIRST (after clearing progress for UX)
-    const existingIndex = getIndex(folderId)
-    if (existingIndex) {
-      console.log('✅ Folder already processed - using existing index')
-      addProgressUpdate(folderId, '✅ Folder already processed! Warming chat function...')
-      
-      // Still warm the chat function to ensure it works
-      try {
-        const host = request.headers.get('host')
-        const protocol = request.headers.get('x-forwarded-proto') || 'http'
-        const baseUrl = `${protocol}://${host}`
-        
-        await fetch(`${baseUrl}/api/chat`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Cookie': request.headers.get('cookie') || '',
-          },
-          body: JSON.stringify({
-            message: 'warmup',
-            folderId,
-            history: []
-          }),
-        })
-        
-        addProgressUpdate(folderId, '🎉 Ready to chat! (using existing index)')
-      } catch (error) {
-        console.log('⚠️ Warmup failed but index exists:', error)
-        addProgressUpdate(folderId, '🎉 Ready to chat! (warmup failed but index exists)')
-      }
-      
-      return NextResponse.json({ 
-        success: true,
-        message: 'Folder already processed',
-        folderName: 'Processed Folder'
-      })
-    }
 
-    // PHASE 1: Connect to Google Drive (10%)
+    // Initialize Google Drive API
     console.log('🔐 Initializing Google Drive API...')
-    addProgressUpdate(folderId, '🔐 Connected to Google Drive, scanning folder...')
+    addProgressUpdate(folderId, '🔐 Connecting to Google Drive...')
     const auth = new google.auth.OAuth2()
     auth.setCredentials({ access_token: session.accessToken })
     const drive = google.drive({ version: 'v3', auth })
 
     // Get folder information
     console.log('📋 Fetching folder information...')
+    addProgressUpdate(folderId, '📋 Fetching folder information...')
     const folderResponse = await drive.files.get({
       fileId: folderId,
       fields: 'name'
@@ -288,9 +251,11 @@ export async function POST(request: NextRequest) {
 
     const folderName = folderResponse.data.name || 'Untitled Folder'
     console.log(`📁 Folder name: "${folderName}"`)
+    addProgressUpdate(folderId, `📁 Found folder: "${folderName}"`)
 
     // List files in the folder
     console.log('📋 Listing files in folder...')
+    addProgressUpdate(folderId, '📋 Scanning files in folder...')
     const filesResponse = await drive.files.list({
       q: `'${folderId}' in parents and trashed=false`,
       fields: 'files(id,name,mimeType,size)',
@@ -299,6 +264,7 @@ export async function POST(request: NextRequest) {
 
     const files = filesResponse.data.files || []
     console.log(`📄 Found ${files.length} total files`)
+    addProgressUpdate(folderId, `📄 Found ${files.length} total files`)
     
     // Filter supported file types
     const supportedMimeTypes = [
@@ -322,9 +288,7 @@ export async function POST(request: NextRequest) {
     supportedFiles.forEach((file, index) => {
       console.log(`  ${index + 1}. ${file.name} (${file.mimeType})`)
     })
-    
-    // PHASE 2: Found files, ready to process (30%)
-    addProgressUpdate(folderId, `📄 Found ${supportedFiles.length} files in "${folderName}", starting processing...`)
+    addProgressUpdate(folderId, `✅ Found ${supportedFiles.length} supported files to process`)
 
     if (supportedFiles.length === 0) {
       console.log('❌ No supported files found')
@@ -334,25 +298,37 @@ export async function POST(request: NextRequest) {
       }, { status: 400 })
     }
 
-    // Process documents (this happens in the background without progress updates)
+    // Process documents
     console.log('\n🔄 Starting document processing...')
+    addProgressUpdate(folderId, '🔄 Starting document processing...')
     const documents: Document[] = []
 
     // Process files sequentially to avoid overwhelming APIs
     for (let i = 0; i < supportedFiles.length; i++) {
       const file = supportedFiles[i]
-      console.log(`📄 Processing file ${i + 1}/${supportedFiles.length}: ${file.name}`)
+      addProgressUpdate(folderId, `📄 Processing file ${i + 1}/${supportedFiles.length}: ${file.name}`)
+      
+      // Add a small delay to ensure progress updates are visible
+      await new Promise(resolve => setTimeout(resolve, 100))
       
       try {
         const document = await processFile(drive, file, i, supportedFiles.length)
         if (document && document.getText().trim()) {
           documents.push(document)
           console.log(`  ✅ Successfully processed: ${file.name}`)
+          addProgressUpdate(folderId, `  ✅ Successfully processed: ${file.name}`)
         } else {
           console.log(`  ⚠️ Skipped (no content): ${file.name}`)
+          addProgressUpdate(folderId, `  ⚠️ Skipped (no content): ${file.name}`)
         }
       } catch (error) {
         console.error(`  ❌ Error processing file ${file.name}:`, error)
+        addProgressUpdate(folderId, `  ❌ Error processing file: ${file.name}`)
+      }
+      
+      // Small delay between files to ensure EventSource can keep up
+      if (i < supportedFiles.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 200))
       }
     }
 
@@ -374,11 +350,9 @@ export async function POST(request: NextRequest) {
       console.log(`    Content length: ${doc.getText().length}`)
     })
 
-    // PHASE 3: All files processed, creating search index (70%)
-    addProgressUpdate(folderId, `🧠 All files processed, creating search index for ${documents.length} documents...`)
-
     // Create vector index using LlamaIndex.TS Ingestion Pipeline with metadata extraction
     console.log('\n🧠 Creating vector index with enhanced metadata extraction...')
+    addProgressUpdate(folderId, '🧠 Creating enhanced metadata extraction pipeline...')
     
     // Import LlamaIndex components for proper metadata handling
     const { IngestionPipeline, TitleExtractor, QuestionsAnsweredExtractor, SentenceSplitter, MetadataMode } = await import('llamaindex')
@@ -410,6 +384,7 @@ export async function POST(request: NextRequest) {
           processedAt: new Date().toISOString(),
           
           // Preserve all original metadata
+          ...doc.metadata
         },
         // Ensure document has a stable ID based on content
         id_: doc.id_ || `doc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
@@ -417,11 +392,13 @@ export async function POST(request: NextRequest) {
     })
     
     console.log('✅ Documents prepared with enhanced metadata')
+    addProgressUpdate(folderId, '🔍 Preparing documents with enhanced metadata...')
     
     let index: VectorStoreIndex
     
     try {
       console.log('📋 Setting up advanced ingestion pipeline with metadata extractors...')
+      addProgressUpdate(folderId, '📋 Setting up metadata extraction transformations...')
       
       // Create enhanced ingestion pipeline with metadata extraction
       const pipeline = new IngestionPipeline({
@@ -443,6 +420,7 @@ export async function POST(request: NextRequest) {
       })
       
       console.log(`🔄 Processing ${documents.length} documents through enhanced pipeline...`)
+      addProgressUpdate(folderId, `🔄 Processing ${documents.length} documents with metadata extraction...`)
       
       // Run the pipeline to get nodes with enhanced metadata
       const nodesWithEnhancedMetadata = await pipeline.run({
@@ -450,6 +428,7 @@ export async function POST(request: NextRequest) {
       })
       
       console.log(`✅ Enhanced pipeline created ${nodesWithEnhancedMetadata.length} nodes with metadata`)
+      addProgressUpdate(folderId, `✅ Created ${nodesWithEnhancedMetadata.length} enhanced nodes`)
       
       // Debug: Check enhanced metadata
       console.log('\n🔍 Debugging enhanced metadata:')
@@ -466,20 +445,30 @@ export async function POST(request: NextRequest) {
       index = await VectorStoreIndex.fromDocuments(documentsWithProperMetadata)
       
       console.log('✅ Vector index created with enhanced metadata extraction')
+      addProgressUpdate(folderId, '✅ Vector index created successfully with metadata extraction')
       
     } catch (error) {
       console.error('❌ Enhanced pipeline failed, falling back to basic approach:', error)
+      addProgressUpdate(folderId, '⚠️ Falling back to basic indexing...')
       
       // Fallback to the current working approach
       index = await VectorStoreIndex.fromDocuments(documentsWithProperMetadata)
       console.log('✅ Fallback index created successfully')
+      addProgressUpdate(folderId, '✅ Fallback index created successfully')
     }
 
     // Store the index in memory (in production, use persistent storage)
     storeIndex(folderId, index)
+    addProgressUpdate(folderId, '💾 Storing index for chat queries...')
     
-    // PHASE 4: Index ready, warming chat function (90%)
-    addProgressUpdate(folderId, '🔥 Index ready, warming chat function...')
+    // Small delay to ensure progress updates are visible
+    await new Promise(resolve => setTimeout(resolve, 500))
+    
+    // CRITICAL: Warm the chat function to eliminate cold start issues
+    addProgressUpdate(folderId, '🔥 Warming chat function to eliminate cold starts...')
+    
+    // Another small delay to ensure the warming message is seen
+    await new Promise(resolve => setTimeout(resolve, 300))
     try {
       // Get the proper URL from the request headers
       const host = request.headers.get('host')
@@ -522,12 +511,18 @@ export async function POST(request: NextRequest) {
       if (warmupResponse.status === 200) {
         // Success - index was reconstructed in chat function
         const warmupData = await warmupResponse.json()
+        addProgressUpdate(folderId, `✅ Chat function warmed with ${warmupData.documentsLoaded} documents! Ready for instant chat.`)
         console.log('✅ Chat function successfully warmed with index - cold starts eliminated!')
+      } else if (warmupResponse.status === 404) {
+        addProgressUpdate(folderId, '⚠️ Chat warmup completed but no documents transferred')
+        console.log('⚠️ Chat warmup completed but documents not received')
       } else {
+        addProgressUpdate(folderId, '⚠️ Chat warmup partial - may need one retry')
         console.log(`⚠️ Chat warmup returned status ${warmupResponse.status}`)
       }
     } catch (error) {
       console.log('⚠️ First chat function warmup failed, trying backup approach:', error)
+      addProgressUpdate(folderId, '🔄 Trying backup warmup approach...')
       
       // Backup warmup: try with just the domain from headers
       try {
@@ -550,10 +545,15 @@ export async function POST(request: NextRequest) {
         })
         
         console.log(`🔄 Backup warmup status: ${backupResponse.status}`)
+        addProgressUpdate(folderId, '✅ Backup warmup completed - chat should work')
       } catch (backupError) {
         console.log('⚠️ Backup warmup also failed:', backupError)
+        addProgressUpdate(folderId, '⚠️ Warmup failed - chat may need one retry')
       }
     }
+    
+    // Give the warming process a moment to complete
+    await new Promise(resolve => setTimeout(resolve, 500))
 
     const result = {
       success: true,
@@ -565,9 +565,8 @@ export async function POST(request: NextRequest) {
 
     console.log('\n🎉 Folder processing completed successfully!')
     console.log(`📊 Final stats:`, result)
-    
-    // PHASE 5: Complete! (100%)
-    addProgressUpdate(folderId, `🎉 Complete! Processed ${documents.length} documents, ready for chat!`)
+    addProgressUpdate(folderId, '🎉 Folder processing completed successfully!')
+    addProgressUpdate(folderId, `📊 Processed ${documents.length} documents, ready for chat!`)
 
     return NextResponse.json(result)
 
