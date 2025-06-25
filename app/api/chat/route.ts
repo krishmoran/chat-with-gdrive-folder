@@ -23,9 +23,13 @@ export async function POST(request: NextRequest) {
     // Handle function warmup requests with document transfer
     if (message === 'warmup') {
       console.log('🔥 Function warmup request received - initializing chat function...')
+      console.log('🔍 DEBUGGING: Request body keys:', Object.keys({ message, folderId, history, documents, metadata }))
+      console.log('🔍 DEBUGGING: documents exists:', !!documents)
+      console.log('🔍 DEBUGGING: documents length:', documents?.length || 'N/A')
       
       if (documents && documents.length > 0) {
         console.log(`📦 Received ${documents.length} documents in warmup - reconstructing index...`)
+        console.log('🔍 DEBUGGING: First document keys:', Object.keys(documents[0] || {}))
         
         try {
           // Import Document class
@@ -50,21 +54,30 @@ export async function POST(request: NextRequest) {
           console.log('✅ Function warmed successfully - index reconstructed and stored!')
           console.log(`📊 Index created with ${reconstructedDocs.length} documents`)
           
+          // DEBUGGING: Verify storage
+          const { getIndex } = await import('@/lib/document-store')
+          const storedIndex = getIndex(folderId)
+          console.log('🔍 DEBUGGING: Index stored successfully:', !!storedIndex)
+          
           return NextResponse.json({ 
             response: 'Function warmed successfully with index',
             warmed: true,
-            documentsLoaded: reconstructedDocs.length
+            documentsLoaded: reconstructedDocs.length,
+            indexStored: !!storedIndex
           })
         } catch (error) {
           console.error('❌ Error reconstructing index during warmup:', error)
+          console.error('❌ Error details:', error instanceof Error ? error.message : 'Unknown error')
           return NextResponse.json({ 
             response: 'Function warmed but index reconstruction failed',
             warmed: true,
-            error: 'reconstruction_failed'
+            error: 'reconstruction_failed',
+            errorDetails: error instanceof Error ? error.message : 'Unknown error'
           }, { status: 500 })
         }
       } else {
         console.log('⚠️ Warmup received but no documents provided')
+        console.log('🔍 DEBUGGING: Full request body:', JSON.stringify({ message, folderId, history, documents, metadata }, null, 2))
         return NextResponse.json({ 
           response: 'Function warmed but no documents received',
           warmed: true 
