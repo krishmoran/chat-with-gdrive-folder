@@ -461,11 +461,24 @@ export async function POST(request: NextRequest) {
     storeIndex(folderId, index)
     addProgressUpdate(folderId, '💾 Storing index for chat queries...')
     
+    // Small delay to ensure progress updates are visible
+    await new Promise(resolve => setTimeout(resolve, 500))
+    
     // CRITICAL: Warm the chat function to eliminate cold start issues
     addProgressUpdate(folderId, '🔥 Warming chat function to eliminate cold starts...')
+    
+    // Another small delay to ensure the warming message is seen
+    await new Promise(resolve => setTimeout(resolve, 300))
     try {
+      // Get the proper URL from the request headers
+      const host = request.headers.get('host')
+      const protocol = request.headers.get('x-forwarded-proto') || 'http'
+      const baseUrl = `${protocol}://${host}`
+      
+      console.log(`🔥 Warming chat function at: ${baseUrl}/api/chat`)
+      
       // Make a test call to the chat endpoint to initialize it
-      const warmupResponse = await fetch(`${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/api/chat`, {
+      const warmupResponse = await fetch(`${baseUrl}/api/chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -483,13 +496,36 @@ export async function POST(request: NextRequest) {
       if (warmupResponse.status === 200 || warmupResponse.status === 404) {
         // 200 = success, 404 = index not found yet (but function is warm)
         addProgressUpdate(folderId, '✅ Chat function warmed successfully! Ready for instant chat.')
+        console.log('✅ Chat function successfully warmed - should eliminate cold starts')
       } else {
         addProgressUpdate(folderId, '⚠️ Chat warmup partial - may need one retry')
+        console.log(`⚠️ Chat warmup returned status ${warmupResponse.status}`)
       }
     } catch (error) {
-      console.log('⚠️ Chat function warmup failed (non-critical):', error)
-      addProgressUpdate(folderId, '⚠️ Chat warmup skipped - chat may need brief pause before first use')
+      console.log('⚠️ First chat function warmup failed, trying backup approach:', error)
+      addProgressUpdate(folderId, '🔄 Trying backup warmup approach...')
+      
+      // Backup warmup: try with just the domain from headers
+      try {
+        const backupUrl = `https://${request.headers.get('host')}/api/chat`
+        console.log(`🔄 Backup warmup at: ${backupUrl}`)
+        
+        const backupResponse = await fetch(backupUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: 'warmup', folderId, history: [] }),
+        })
+        
+        console.log(`🔄 Backup warmup status: ${backupResponse.status}`)
+        addProgressUpdate(folderId, '✅ Backup warmup completed - chat should work')
+      } catch (backupError) {
+        console.log('⚠️ Backup warmup also failed:', backupError)
+        addProgressUpdate(folderId, '⚠️ Warmup failed - chat may need one retry')
+      }
     }
+    
+    // Give the warming process a moment to complete
+    await new Promise(resolve => setTimeout(resolve, 500))
 
     const result = {
       success: true,
