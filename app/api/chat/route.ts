@@ -29,9 +29,11 @@ export async function POST(request: NextRequest) {
     const index = getIndex(folderId)
     
     if (!index) {
-      console.log('❌ No index found for this folder')
+      console.log('❌ No index found for this folder - likely serverless cold start')
       return NextResponse.json({ 
-        error: 'Folder not found or not indexed. Please process the folder first.' 
+        error: 'Your folder index was not found. This can happen in serverless environments when the server restarts. Please process your folder again to continue chatting.',
+        code: 'INDEX_NOT_FOUND',
+        needsReprocessing: true
       }, { status: 404 })
     }
 

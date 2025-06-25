@@ -78,7 +78,17 @@ export function ChatInterface({ folderId }: ChatInterfaceProps) {
       })
 
       if (!response.ok) {
-        throw new Error('Failed to get response')
+        const errorData = await response.json()
+        
+        // Handle specific index not found error
+        if (errorData.code === 'INDEX_NOT_FOUND') {
+          toast.error('Folder index lost due to server restart. Please process your folder again.', {
+            duration: 8000
+          })
+          throw new Error(errorData.error)
+        }
+        
+        throw new Error(errorData.error || 'Failed to get response')
       }
 
       const data = await response.json()

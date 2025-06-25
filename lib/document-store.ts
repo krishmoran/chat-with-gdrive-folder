@@ -7,7 +7,7 @@ declare global {
 }
 
 // Shared in-memory storage for document indices
-// In production, this should use Redis or a database
+// In serverless environments, this will be empty on cold starts
 export const documentIndices = globalThis.__documentIndices ?? new Map<string, VectorStoreIndex>()
 
 if (process.env.NODE_ENV === 'development') {
@@ -27,9 +27,27 @@ export function getIndex(folderId: string): VectorStoreIndex | undefined {
   console.log(`📊 Available indices: ${Array.from(documentIndices.keys()).join(', ')}`)
   console.log(`📊 Map size: ${documentIndices.size}`)
   console.log(`✅ Index found: ${index ? 'Yes' : 'No'}`)
+  
+  if (!index) {
+    console.log(`❌ Index not found for folder: ${folderId}`)
+    console.log(`💡 This is likely due to serverless cold start - user needs to reprocess the folder`)
+  }
+  
   return index
 }
 
 export function listIndices(): string[] {
   return Array.from(documentIndices.keys())
+}
+
+export function clearIndex(folderId: string) {
+  const deleted = documentIndices.delete(folderId)
+  console.log(`🗑️ Index cleared for folder: ${folderId}, success: ${deleted}`)
+  return deleted
+}
+
+export function clearAllIndices() {
+  const count = documentIndices.size
+  documentIndices.clear()
+  console.log(`🗑️ Cleared ${count} indices`)
 } 
