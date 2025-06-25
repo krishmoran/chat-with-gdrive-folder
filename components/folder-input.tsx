@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card'
-import { Progress } from './ui/progress'
+
 import { LoadingSpinner } from './ui/loading-spinner'
 import { toast } from 'sonner'
 import { Folder, Link, CheckCircle, AlertCircle } from 'lucide-react'
@@ -17,7 +17,7 @@ interface FolderInputProps {
 
 export function FolderInput({ onFolderProcessed, isIndexing, setIsIndexing }: FolderInputProps) {
   const [folderUrl, setFolderUrl] = useState('')
-  const [progress, setProgress] = useState(0)
+  // Removed progress tracking - just use loading spinner
   const [status, setStatus] = useState<string>('')
   const [progressLogs, setProgressLogs] = useState<string[]>([])
   const [isRetrying, setIsRetrying] = useState(false)
@@ -31,7 +31,6 @@ export function FolderInput({ onFolderProcessed, isIndexing, setIsIndexing }: Fo
 
   const processFolder = async (folderId: string, isRetry: boolean = false) => {
     setIsIndexing(true)
-    setProgress(0)
     setStatus('Initializing...')
     setProgressLogs([])
     
@@ -51,7 +50,6 @@ export function FolderInput({ onFolderProcessed, isIndexing, setIsIndexing }: Fo
       setTimeout(() => {
         // Set up Server-Sent Events for real-time progress
         eventSourceRef.current = new EventSource(`/api/folders/progress?folderId=${folderId}`)
-        let currentProgress = 0
         
         eventSourceRef.current.onmessage = (event) => {
           const data = JSON.parse(event.data)
@@ -59,26 +57,6 @@ export function FolderInput({ onFolderProcessed, isIndexing, setIsIndexing }: Fo
           
           setProgressLogs(prev => [...prev, message])
           setStatus(message)
-          
-          // Update progress based on key milestones
-          if (message.includes('🔐 Connecting')) currentProgress = 10
-          else if (message.includes('📋 Fetching folder')) currentProgress = 20
-          else if (message.includes('📄 Found') && message.includes('files')) currentProgress = 30
-          else if (message.includes('🔄 Starting document')) currentProgress = 40
-          else if (message.includes('Processing file')) {
-            // Extract file number for granular progress
-            const match = message.match(/(\d+)\/(\d+)/)
-            if (match) {
-              const current = parseInt(match[1])
-              const total = parseInt(match[2])
-              currentProgress = 40 + ((current / total) * 30) // 40-70% for file processing
-            }
-          }
-          else if (message.includes('🧠 Creating vector')) currentProgress = 80
-          else if (message.includes('✅ Vector index created')) currentProgress = 90
-          else if (message.includes('🎉 Folder processing completed')) currentProgress = 100
-          
-          setProgress(currentProgress)
         }
         
         eventSourceRef.current.onerror = () => {
@@ -108,7 +86,6 @@ export function FolderInput({ onFolderProcessed, isIndexing, setIsIndexing }: Fo
 
       const data = await response.json()
       
-      setProgress(100)
       setStatus('Folder indexed successfully!')
       setLastFailedFolderId(null) // Clear failed folder ID on success
       
@@ -129,7 +106,6 @@ export function FolderInput({ onFolderProcessed, isIndexing, setIsIndexing }: Fo
       eventSourceRef.current?.close()
       
       setIsIndexing(false)
-      setProgress(0)
       setStatus('')
       setLastFailedFolderId(folderId) // Store failed folder ID for retry
       
@@ -189,11 +165,9 @@ export function FolderInput({ onFolderProcessed, isIndexing, setIsIndexing }: Fo
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
-            <div className="flex justify-between text-sm">
+            <div className="text-sm text-center">
               <span className="text-gray-600">{status}</span>
-              <span className="text-gray-600">{progress}%</span>
             </div>
-            <Progress value={progress} className="w-full" />
           </div>
           
           {/* Real-time progress logs */}
