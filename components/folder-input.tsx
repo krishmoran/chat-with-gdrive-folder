@@ -20,11 +20,140 @@ export function FolderInput({ onFolderProcessed, isIndexing, setIsIndexing }: Fo
   const [progress, setProgress] = useState(0)
   const [status, setStatus] = useState<string>('')
   const [progressLogs, setProgressLogs] = useState<string[]>([])
+  const [isRetrying, setIsRetrying] = useState(false)
+  const [lastFailedFolderId, setLastFailedFolderId] = useState<string | null>(null)
 
   const extractFolderId = (url: string): string | null => {
     const regex = /\/folders\/([a-zA-Z0-9-_]+)/
     const match = url.match(regex)
     return match ? match[1] : null
+  }
+
+  const processFolder = async (folderId: string, isRetry: boolean = false) => {
+    setIsIndexing(true)
+    setProgress(0)
+    setStatus('Initializing...')
+    setProgressLogs([])
+    
+    const eventSourceRef = { current: null as EventSource | null }
+
+    try {
+      // Start the processing request first
+      const processingPromise = fetch('/api/folders/process', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ folderId }),
+      })
+
+      // Wait a moment before connecting to progress stream to avoid race condition
+      setTimeout(() => {
+        // Set up Server-Sent Events for real-time progress
+        eventSourceRef.current = new EventSource(`/api/folders/progress?folderId=${folderId}`)
+        let currentProgress = 0
+        
+        eventSourceRef.current.onmessage = (event) => {
+          const data = JSON.parse(event.data)
+          const message = data.message
+          
+          setProgressLogs(prev => [...prev, message])
+          setStatus(message)
+          
+          // Update progress based on key milestones
+          if (message.includes('🔐 Connecting')) currentProgress = 10
+          else if (message.includes('📋 Fetching folder')) currentProgress = 20
+          else if (message.includes('📄 Found') && message.includes('files')) currentProgress = 30
+          else if (message.includes('🔄 Starting document')) currentProgress = 40
+          else if (message.includes('Processing file')) {
+            // Extract file number for granular progress
+            const match = message.match(/(\d+)\/(\d+)/)
+            if (match) {
+              const current = parseInt(match[1])
+              const total = parseInt(match[2])
+              currentProgress = 40 + ((current / total) * 30) // 40-70% for file processing
+            }
+          }
+          else if (message.includes('🧠 Creating vector')) currentProgress = 80
+          else if (message.includes('✅ Vector index created')) currentProgress = 90
+          else if (message.includes('🎉 Folder processing completed')) currentProgress = 100
+          
+          setProgress(currentProgress)
+        }
+        
+        eventSourceRef.current.onerror = () => {
+          console.warn('EventSource error occurred')
+          eventSourceRef.current?.close()
+        }
+      }, 500) // 500ms delay to ensure processing starts first
+      
+      const response = await processingPromise
+
+      eventSourceRef.current?.close()
+
+      if (!response.ok) {
+        const error = await response.json()
+        
+        // Handle specific error types
+        if (response.status === 401) {
+          throw new Error('Authentication failed. Please sign in again.')
+        } else if (response.status === 404) {
+          throw new Error('Folder not found. Please check the URL and permissions.')
+        } else if (error.error?.includes('serverless cold start')) {
+          throw new Error('Index was lost due to server restart. Please try processing again.')
+        } else {
+          throw new Error(error.error || error.message || 'Failed to process folder')
+        }
+      }
+
+      const data = await response.json()
+      
+      setProgress(100)
+      setStatus('Folder indexed successfully!')
+      setLastFailedFolderId(null) // Clear failed folder ID on success
+      
+      setTimeout(() => {
+        onFolderProcessed(folderId, data.folderName)
+        setIsIndexing(false)
+        
+        if (isRetry) {
+          toast.success('Retry successful! Folder processed.')
+        } else {
+          toast.success('Folder processed successfully!')
+        }
+      }, 1000)
+
+    } catch (error) {
+      console.error('Error processing folder:', error)
+      
+      eventSourceRef.current?.close()
+      
+      setIsIndexing(false)
+      setProgress(0)
+      setStatus('')
+      setLastFailedFolderId(folderId) // Store failed folder ID for retry
+      
+      const errorMessage = error instanceof Error ? error.message : 'Failed to process folder'
+      
+      if (isRetry) {
+        toast.error(`Retry failed: ${errorMessage}`)
+      } else {
+        toast.error(errorMessage, {
+          action: {
+            label: 'Retry',
+            onClick: () => handleRetry(folderId)
+          },
+          duration: 8000 // Longer duration for retry option
+        })
+      }
+    }
+  }
+
+  const handleRetry = async (folderId: string) => {
+    setIsRetrying(true)
+    toast.info('Retrying folder processing...')
+    await processFolder(folderId, true)
+    setIsRetrying(false)
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -41,81 +170,7 @@ export function FolderInput({ onFolderProcessed, isIndexing, setIsIndexing }: Fo
       return
     }
 
-    setIsIndexing(true)
-    setProgress(0)
-    setStatus('Initializing...')
-    setProgressLogs([])
-
-    try {
-      // Set up Server-Sent Events for real-time progress
-      const eventSource = new EventSource(`/api/folders/progress?folderId=${folderId}`)
-      let currentProgress = 0
-      
-      eventSource.onmessage = (event) => {
-        const data = JSON.parse(event.data)
-        const message = data.message
-        
-        setProgressLogs(prev => [...prev, message])
-        setStatus(message)
-        
-        // Update progress based on key milestones
-        if (message.includes('🔐 Connecting')) currentProgress = 10
-        else if (message.includes('📋 Fetching folder')) currentProgress = 20
-        else if (message.includes('📄 Found') && message.includes('files')) currentProgress = 30
-        else if (message.includes('🔄 Starting document')) currentProgress = 40
-        else if (message.includes('Processing file')) {
-          // Extract file number for granular progress
-          const match = message.match(/(\d+)\/(\d+)/)
-          if (match) {
-            const current = parseInt(match[1])
-            const total = parseInt(match[2])
-            currentProgress = 40 + ((current / total) * 30) // 40-70% for file processing
-          }
-        }
-        else if (message.includes('🧠 Creating vector')) currentProgress = 80
-        else if (message.includes('✅ Vector index created')) currentProgress = 90
-        else if (message.includes('🎉 Folder processing completed')) currentProgress = 100
-        
-        setProgress(currentProgress)
-      }
-      
-      eventSource.onerror = () => {
-        eventSource.close()
-      }
-      
-      // Call the API to process the folder
-      const response = await fetch('/api/folders/process', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ folderId }),
-      })
-
-      eventSource.close()
-
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.message || 'Failed to process folder')
-      }
-
-      const data = await response.json()
-      
-      setProgress(100)
-      setStatus('Folder indexed successfully!')
-      
-      setTimeout(() => {
-        onFolderProcessed(folderId, data.folderName)
-        toast.success('Folder processed successfully!')
-      }, 1000)
-
-    } catch (error) {
-      console.error('Error processing folder:', error)
-      setIsIndexing(false)
-      setProgress(0)
-      setStatus('')
-      toast.error(error instanceof Error ? error.message : 'Failed to process folder')
-    }
+    await processFolder(folderId, false)
   }
 
   if (isIndexing) {
@@ -186,10 +241,34 @@ export function FolderInput({ onFolderProcessed, isIndexing, setIsIndexing }: Fo
         </div>
       </div>
 
-      <Button type="submit" className="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700">
-        <Folder className="h-4 w-4 mr-2" />
-        Process Folder
-      </Button>
+      <div className="space-y-2">
+        <Button type="submit" className="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700">
+          <Folder className="h-4 w-4 mr-2" />
+          Process Folder
+        </Button>
+        
+        {lastFailedFolderId && (
+          <Button 
+            type="button" 
+            variant="outline" 
+            onClick={() => handleRetry(lastFailedFolderId)}
+            disabled={isRetrying}
+            className="w-full"
+          >
+            {isRetrying ? (
+              <>
+                <LoadingSpinner size="sm" className="mr-2" />
+                Retrying...
+              </>
+            ) : (
+              <>
+                <AlertCircle className="h-4 w-4 mr-2" />
+                Retry Last Failed Processing
+              </>
+            )}
+          </Button>
+        )}
+      </div>
 
       <div className="bg-gray-50 p-4 rounded-lg">
         <h4 className="font-medium text-gray-900 mb-2 flex items-center gap-2">

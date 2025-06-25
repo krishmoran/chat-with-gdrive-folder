@@ -5,7 +5,7 @@ import { google } from 'googleapis'
 import { Document, VectorStoreIndex } from 'llamaindex'
 import { LlamaParseReader } from '@llamaindex/cloud'
 import { storeIndex } from '@/lib/document-store'
-import { addProgressUpdate } from '../progress/route'
+import { addProgressUpdate, clearProgress } from '../progress/route'
 
 // Helper function to process different file types
 async function processFile(
@@ -224,12 +224,15 @@ export async function POST(request: NextRequest) {
 
     const { folderId } = await request.json()
     console.log(`📂 Processing folder ID: ${folderId}`)
-    addProgressUpdate(folderId, '🚀 Starting folder processing...')
 
     if (!folderId) {
       console.log('❌ No folder ID provided')
       return NextResponse.json({ error: 'Folder ID is required' }, { status: 400 })
     }
+
+    // Clear any existing progress data before starting
+    clearProgress(folderId)
+    addProgressUpdate(folderId, '🚀 Starting folder processing...')
 
     // Initialize Google Drive API
     console.log('🔐 Initializing Google Drive API...')
