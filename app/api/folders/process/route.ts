@@ -307,14 +307,28 @@ export async function POST(request: NextRequest) {
     for (let i = 0; i < supportedFiles.length; i++) {
       const file = supportedFiles[i]
       addProgressUpdate(folderId, `📄 Processing file ${i + 1}/${supportedFiles.length}: ${file.name}`)
-      const document = await processFile(drive, file, i, supportedFiles.length)
-      if (document && document.getText().trim()) {
-        documents.push(document)
-        console.log(`  ✅ Successfully processed: ${file.name}`)
-        addProgressUpdate(folderId, `  ✅ Successfully processed: ${file.name}`)
-      } else {
-        console.log(`  ⚠️ Skipped (no content): ${file.name}`)
-        addProgressUpdate(folderId, `  ⚠️ Skipped (no content): ${file.name}`)
+      
+      // Add a small delay to ensure progress updates are visible
+      await new Promise(resolve => setTimeout(resolve, 100))
+      
+      try {
+        const document = await processFile(drive, file, i, supportedFiles.length)
+        if (document && document.getText().trim()) {
+          documents.push(document)
+          console.log(`  ✅ Successfully processed: ${file.name}`)
+          addProgressUpdate(folderId, `  ✅ Successfully processed: ${file.name}`)
+        } else {
+          console.log(`  ⚠️ Skipped (no content): ${file.name}`)
+          addProgressUpdate(folderId, `  ⚠️ Skipped (no content): ${file.name}`)
+        }
+      } catch (error) {
+        console.error(`  ❌ Error processing file ${file.name}:`, error)
+        addProgressUpdate(folderId, `  ❌ Error processing file: ${file.name}`)
+      }
+      
+      // Small delay between files to ensure EventSource can keep up
+      if (i < supportedFiles.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 200))
       }
     }
 
